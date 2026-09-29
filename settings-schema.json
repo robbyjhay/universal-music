@@ -1,0 +1,60 @@
+{
+    "appearance-header": {
+        "type": "header",
+        "description": "Appearance"
+    },
+    "widget-size": {
+        "type": "combobox",
+        "description": "Widget size:",
+        "default": "medium",
+        "tooltip": "Controls the size of the desklet widget.",
+        "options": {
+            "Small": "small",
+            "Medium": "medium",
+            "Large": "large"
+        }
+    },
+    "opacity": {
+        "type": "scale",
+        "description": "Opacity:",
+        "default": 100,
+        "min": 10,
+        "max": 100,
+        "step": 5,
+        "show-value": true,
+        "units": "%",
+        "tooltip": "Transparency of the desklet. Lower values make it blend into the desktop."
+    },
+    "show-artwork": {
+        "type": "switch",
+        "description": "Show album artwork",
+        "default": true,
+        "tooltip": "Display the artwork exposed by the active MPRIS player."
+    },
+    "show-controls": {
+        "type": "switch",
+        "description": "Show playback controls",
+        "default": true,
+        "tooltip": "Display the previous / play-pause / next buttons."
+    },
+    "player-header": {
+        "type": "header",
+        "description": "Player"
+    },
+    "preferred-player": {
+        "type": "entry",
+        "description": "Preferred player:",
+        "default": "",
+        "tooltip": "The MPRIS bus name suffix of the player to control, for example 'vlc' or 'spotify'. Leave empty to detect the active player automatically."
+    },
+    "advanced-header": {
+        "type": "header",
+        "description": "Advanced"
+    },
+    "debug-logging": {
+        "type": "switch",
+        "description": "Verbose debug logging",
+        "default": false,
+        "tooltip": "Log MPRIS player discovery and property changes to the Cinnamon journal. Useful when reporting bugs."
+    }
+}

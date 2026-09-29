@@ -1,0 +1,135 @@
+/* stylesheet.css - Universal Music
+ *
+ * Cinnamon loads this file automatically for any desklet that has one, and
+ * reloads it when the theme changes. All visual styling lives here so that
+ * desklet.js only ever deals with style class names.
+ *
+ * The "umd-" prefix keeps these rules from colliding with Cinnamon's own theme
+ * or with another desklet's stylesheet.
+ */
+
+/* --------------------------------------------------------------- Container */
+
+.umd-root {
+    spacing: 8px;
+    padding: 10px;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    min-width: 180px;
+}
+
+.umd-root:hover {
+    background-color: rgba(0, 0, 0, 0.7);
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* Size presets. The artwork icon size is set in desklet.js, so these classes
+ * mainly drive the text scale and the overall padding. */
+
+.umd-size-small {
+    padding: 7px;
+    spacing: 6px;
+    min-width: 150px;
+}
+
+.umd-size-medium {
+    padding: 10px;
+    spacing: 8px;
+    min-width: 180px;
+}
+
+.umd-size-large {
+    padding: 14px;
+    spacing: 10px;
+    min-width: 220px;
+}
+
+/* ---------------------------------------------------------------- Artwork */
+
+.umd-artwork {
+    padding: 2px;
+    border-radius: 6px;
+}
+
+.umd-artwork-image {
+    border-radius: 4px;
+}
+
+.umd-artwork-placeholder {
+    color: rgba(255, 255, 255, 0.45);
+    padding: 8px;
+}
+
+/* An advertised artwork URL the desklet could not turn into an image, for
+ * example an unsupported URI scheme. Slightly dimmed so it reads as a
+ * placeholder rather than an error. */
+.umd-artwork-unsupported {
+    color: rgba(255, 255, 255, 0.28);
+    padding: 8px;
+}
+
+/* ------------------------------------------------------------------ Text */
+
+.umd-info {
+    spacing: 1px;
+    padding: 0px 2px;
+}
+
+.umd-title {
+    font-weight: bold;
+    font-size: 1.05em;
+}
+
+.umd-artist {
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.umd-position {
+    font-size: 0.8em;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+/* --------------------------------------------------------------- Controls */
+
+.umd-controls {
+    spacing: 6px;
+    padding: 2px 0px;
+}
+
+.umd-button {
+    padding: 4px;
+    border-radius: 50%;
+    transition-duration: 120ms;
+    color: #ffffff;
+}
+
+.umd-button:hover {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.umd-button:active {
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
+/* Drawn by desklet.js via set_reactive(); non-reactive buttons keep their
+ * normal icon colour but do not highlight on hover. */
+.umd-button:insensitive .umd-button-icon {
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.umd-button-icon {
+    icon-size: 22px;
+    color: #ffffff;
+}
+
+/* Larger tap targets for the large preset. */
+.umd-size-large .umd-button {
+    padding: 6px;
+}
+
+.umd-size-large .umd-button-icon {
+    icon-size: 26px;
+}
