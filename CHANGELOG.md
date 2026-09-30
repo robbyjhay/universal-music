@@ -5,6 +5,151 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+A layout and playback release. The widget is now measured and laid out rather
+than fixed, the title scrolls when it does not fit, and the playback position
+can be moved.
+
+### Added
+
+- `lib/layout.js`: the responsive layout, timeline and marquee arithmetic.
+  Pure functions over plain numbers, so the rules are in one readable place and
+  testable without a Cinnamon session.
+  - Picks one of three shapes from the space the desklet was given: the cover
+    above the information, beside it, or a compact layout that drops the artist
+    line and the time labels when there is not enough room for both.
+  - Sizes the cover as the smaller of what the size preset allows and what
+    actually fits, so the cover fills the width it has without ever being
+    stretched.
+  - Caps how wide the information column may ask to be, and puts a hard ceiling
+    on the whole widget.
+  - Geometry for the seek bar and the mapping from a pointer position onto it.
+  - The scroll cycle for a title that does not fit: hold still, slide out, hold
+    at the end, slide back, at a constant speed with a pause at each end.
+  - `formatTime()`.
+- A seek bar. It shows the position and the duration, fills as the track plays,
+  and can be moved: clicking the track seeks to that point, and the handle can
+  be dragged for a closer one, with the seek sent when the button is released
+  rather than on every motion. A paused player has no further position
+  updates, so the real value is asked for once after a seek to confirm where
+  playback ended up.
+- A scrolling title. A title wider than the desklet scrolls inside the text
+  column, and one that fits stays exactly where it is. The motion is an ease on
+  the frame clock rather than a repeating timer, so a title that is not
+  scrolling costs nothing, and only the pauses at each end use a timer, once
+  each. The scroll restarts from the beginning on a track change, and on a
+  resize it is measured again.
+- A **Wide** size preset, for the side by side layout. It is the one size
+  setting that changes the shape rather than only the scale.
+- `tests/run-tests.js`: a test runner with no dependencies, covering the layout
+  arithmetic and the parts of the MPRIS layer that do not need a bus. It loads
+  the project modules the way Cinnamon's `require()` does, so no test
+  scaffolding had to be added to the source.
+
+### Changed
+
+- The layout is decided from the real allocation instead of the size preset
+  alone, and the desklet responds to being resized. The cover, the scrolling
+  title and the timeline all follow from that one decision, so they move
+  together.
+- The cover is a box rather than a bin, and is centred on its cross axis. It now
+  uses the width available to it instead of a fixed square, up to the size
+  preset's limit: 140px instead of 64px on the medium preset.
+- **The cover fills the space above the information instead of floating in the
+  middle of it.** The cover box was stretched to the full width of the desklet
+  while the cover inside it was capped at a size the desklet could be wider
+  than, so on a medium preset a 140px cover sat in a 180px box with a 20px band
+  of desklet background on each side, which read as a black border around the
+  artwork. The box is now the size of the artwork that goes into it, the size
+  presets are the content width of their own preset so the cover reaches the
+  edges, and the cover box has no padding left to show through.
+- **The seek bar is a timeline.** The rail is 3px with rounded ends instead of a
+  20px slab of translucent white, the progress fill is exactly as thick as the
+  rail, and the handle is a 10px white circle centred on it with a soft shadow.
+  The circle grows on hover and while it is being dragged, as a scale around its
+  own centre so that the seek geometry is not affected. The handle is reactive
+  in its own right, because Clutter only picks reactive actors: it is taller
+  than the rail it sits on, and a press on the visible circle that missed the
+  rail would otherwise have fallen through to the body and toggled playback
+  instead of seeking.
+- The rail is a plain widget rather than a box, and the fill and the handle are
+  placed on it by hand. A box lays its children out inside a space as tall as
+  its tallest one, so with a 10px handle in a 3px rail it drew the fill 3px
+  below the rail and the handle 7px above it. The two numbers that place them
+  come from the same timeline geometry as before; only how they are applied
+  changed.
+- The handle's radius is half its width as a length rather than as a
+  percentage. A percentage radius is not honoured here, and the handle came out
+  as a square.
+- The vertical composition is tighter. The gap between the time labels and the
+  transport controls is 5px and the padding around the controls is gone, which
+  together with the thinner seek bar takes about 12px out of the information
+  column. The space above the rail is not a gap: it is where the handle sits
+  when it is bigger than the line it is centred on.
+- The artist is left aligned with the title, which cannot be centred because the
+  scrolling title needs a fixed edge to scroll from.
+- The placeholder icon is drawn at a fraction of the size the real cover would
+  take, so an empty slot does not look like a very large cover.
+- The elapsed time and the duration are separate labels on either side of the
+  timeline rather than one "0:42 / 3:18" line.
+- `MprisPlayer.setPosition()`: `SetPosition` for a player that reports a track
+  id, and a relative `Seek` for one that does not. This is the only change to
+  `lib/mpris.js`.
+
+### Fixed
+
+- **The artwork did not fill the artwork container.** A cover that is not square
+  was drawn into a square box sized from the width the desklet had, so St fitted
+  it inside that square and left a strip of desklet background down each side of
+  it. The cover box is now sized from the shape of the image, read from the
+  cached file with `GdkPixbuf.Pixbuf.get_file_info()` rather than by decoding
+  it, so the artwork reaches the inner edges of its box at any aspect ratio. It
+  is not cropped and it is not stretched: the box changes shape instead, which
+  is the only way to fill a box with an image that must keep its own proportions.
+  A cover whose shape cannot be read is still drawn as a square, which is what
+  it always was. The artwork loading, caching and fetching are untouched.
+- **The desklet could grow until it took the desktop down with it.** This is the
+  important one. A widget is sized to its own contents, so the sizes it reports
+  are the size it is given, and every one of them can be traced back to a
+  measurement of the last one. Two of those loops had a gain above one:
+  - The width of the progress fill is derived from the width of the track, and
+    the width set on the fill becomes the track's own preferred width, which
+    widens the information column, which widens the desklet, which makes the
+    track wider. A track that was playing grew the desklet a little on every
+    layout pass.
+  - The size the desklet had was measured without its 1px border, so the
+    measurement was two pixels short of the truth on every pass, and a desklet
+    with a long title in it grew by exactly those two pixels each time. Measured
+    live, this reached 33,043,416 pixels wide.
+  Both are now impossible rather than unlikely: the information column reports
+  a preferred width no larger than the width the desklet will not go below,
+  which is a number from the stylesheet that no measurement can inflate, and the
+  measurement itself is clamped before anything is worked out from it. The
+  widest the widget can ask for across every size preset is 362px.
+- A long title no longer widens the desklet. St has no maximum width on a
+  widget, only on a theme node, and a theme node's is a fixed length that cannot
+  follow the width the desklet actually has, so the information column and the
+  title's clipping viewport now report a preferred width the layout chooses.
+- The scrolling title stopped scrolling. The cycle ran once and then waited, and
+  a title that was only a few pixels too wide crept along for as long as it was
+  on screen. The cycle now repeats, and a title a few pixels too wide is
+  clipped instead.
+- The layout pass no longer runs before the desklet is on the desktop, which
+  made St complain about theme nodes on widgets that were not in the stage yet.
+- The seek bar does not move the desklet. Cinnamon makes the whole desklet
+  draggable from any button 1 press anywhere on it, by grabbing the pointer in a
+  handler on the desklet container. The seek bar stops the press so the pointer
+  never reaches that grab, and the rest of the body and the header still drag
+  the desklet.
+
+### Not yet implemented
+
+Unchanged from v0.1.0: volume, repeat modes, queue management, playback mode
+selection, animations beyond the title scroll, advanced visual customisation,
+an equalizer, the panel applet, track list integration, persistent artwork
+caching and translations.
+
 ## [0.1.0]
 
 First release. Universal Music is provided as a Cinnamon desklet and has been
@@ -128,7 +273,6 @@ testing and now covered by a regression test:
 - Verification against real players other than Spotify (VLC, Firefox, mpv,
   Rhythmbox). Spotify is verified; the others are exercised only through the
   test suite.
-- Seeking: a draggable progress bar and click-to-seek.
 - Volume control.
 - An Applet build, so the widget can live in the panel and be permanently
   visible. See the note above about desklets not being able to stay on top.
@@ -138,3 +282,5 @@ testing and now covered by a regression test:
 - Translations.
 
 [unreleased]: https://github.com/robbyjhay/universal-music/commits/main
+[0.2.0]: https://github.com/robbyjhay/universal-music/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/robbyjhay/universal-music/releases/tag/v0.1.0

@@ -3,7 +3,7 @@
     "name": "Universal Music",
     "description": "Show and control the media that is currently playing on the desktop through MPRIS. Works with any MPRIS-compatible application such as VLC, Spotify, Firefox, Chromium, mpv, Rhythmbox or Strawberry.",
     "icon": "universal-music-symbolic",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "author": "robbyjhay",
     "max-instances": "10",
     "prevent-decorations": false,

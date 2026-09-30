@@ -16,3 +16,6 @@ build/
 dist/
 *.tar.gz
 *.zip
+
+tests/
+*.png

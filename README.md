@@ -6,7 +6,7 @@ It provides a unified interface for viewing and controlling media playback acros
 
 Universal Music is currently available as a **Cinnamon Desklet**, with a **Cinnamon panel Applet** planned for a future release.
 
-**Current release: v0.1.0**
+**Current release: v0.2.0**
 
 ---
 
@@ -14,10 +14,14 @@ Universal Music is currently available as a **Cinnamon Desklet**, with a **Cinna
 
 - Automatic MPRIS player discovery
 - Automatic active-player selection
-- Song title and artist
+- Song title and artist, with a scrolling title for long titles
 - Playback status
 - Live playback progress
-- Album artwork
+- A seek bar: click to seek, drag the handle, and the position keeps up
+  while playing
+- Album artwork, sized to the space the desklet actually has
+- A layout that follows the desklet: cover above the information, beside it,
+  or a compact version when there is not enough room
 - Previous, Play/Pause, and Next controls
 - Preferred-player selection
 - Configurable widget size and opacity
@@ -26,6 +30,28 @@ Universal Music is currently available as a **Cinnamon Desklet**, with a **Cinna
 - No npm packages
 - No build step
 - No additional runtime dependencies
+
+---
+
+## Layout
+
+The widget has no fixed layout. Every allocation it is given is measured, and
+the shape is worked out from that: the cover and the information either stack or
+sit side by side, and if there is not enough room for both, the artist line and
+the time labels are dropped rather than the controls.
+
+| Space available | Layout |
+| --- | --- |
+| Taller than wide, or square | Cover above the information |
+| Clearly wider than tall | Cover to the left of the information |
+| Very narrow or very short | Compact: the artist line and the time labels are hidden |
+
+The cover is a square that grows into the width available to it, up to what the
+size preset allows, and keeps its aspect ratio while doing so. A title too long
+for the desklet scrolls inside the text column instead of widening the desklet.
+
+The **Widget size** setting adds a **Wide** preset for the side by side layout.
+It is the one setting that changes the shape rather than only the scale.
 
 ---
 
@@ -41,9 +67,9 @@ Universal Music has been tested with the following media sources:
 - **Google Chrome**
 - **Rhythmbox**
 
-These tests covered player detection, metadata, playback state, live progress, artwork where provided, and transport controls.
+These tests covered player detection, metadata, playback state, live progress, artwork where provided, transport controls, and, from v0.2.0, seeking.
 
-Compatibility is based on the standard MPRIS interface rather than dedicated integrations for individual applications.
+Compatibility is based on the standard MPRIS interface rather than dedicated integrations for individual applications. Seeking is `org.mpris.MediaPlayer2.Player.SetPosition`, with a relative `Seek` for the players that report none; a player that reports `CanSeek` as false gets an inert timeline rather than a seek that silently does nothing.
 
 ---
 

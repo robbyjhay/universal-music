@@ -3,16 +3,46 @@
         "type": "header",
         "description": "Appearance"
     },
+    "size-header": {
+        "type": "header",
+        "description": "Widget size"
+    },
     "widget-size": {
         "type": "combobox",
-        "description": "Widget size:",
+        "description": "Size preset:",
         "default": "medium",
-        "tooltip": "Controls the size of the desklet widget.",
+        "tooltip": "Picks a starting size and fills in the width and the height below. Choose 'Custom' to keep an exact width and height of your own. The layout always follows the size the widget actually gets: a wide one puts the artwork beside the track information, a narrow or short one falls back to a compact layout.",
         "options": {
             "Small": "small",
             "Medium": "medium",
-            "Large": "large"
+            "Large": "large",
+            "Wide": "wide",
+            "Custom": "custom"
         }
+    },
+    "widget-width": {
+        "type": "spinbutton",
+        "description": "Width:",
+        "default": 180,
+        "min": 150,
+        "max": 420,
+        "step": 10,
+        "units": "px",
+        "tooltip": "Exact width of the widget, in pixels. Anything outside 150 to 420 is clamped to that range."
+    },
+    "widget-height": {
+        "type": "spinbutton",
+        "description": "Height:",
+        "default": 310,
+        "min": 100,
+        "max": 440,
+        "step": 10,
+        "units": "px",
+        "tooltip": "Exact height of the widget, in pixels. Anything outside 100 to 440 is clamped to that range."
+    },
+    "appearance-options-header": {
+        "type": "header",
+        "description": "Options"
     },
     "opacity": {
         "type": "scale",
@@ -24,6 +54,17 @@
         "show-value": true,
         "units": "%",
         "tooltip": "Transparency of the desklet. Lower values make it blend into the desktop."
+    },
+    "title-alignment": {
+        "type": "combobox",
+        "description": "Title alignment:",
+        "default": "left",
+        "tooltip": "Where the track name sits when it fits. Left matches the artist underneath it. A track name too long to fit scrolls through the whole title area, so it fills it whatever this is set to and always starts at the left.",
+        "options": {
+            "Left": "left",
+            "Center": "center",
+            "Right": "right"
+        }
     },
     "show-artwork": {
         "type": "switch",
