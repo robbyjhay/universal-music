@@ -98,6 +98,23 @@ const CUSTOM_ARTWORK_MAX = Layout.MAX_WIDGET_WIDTH;
  * covers the very first one, before anything has been allocated. */
 const DEFAULT_SPACING = 8;
 
+/* How many times one layout pass will ask the layout what it needs at a
+ * progressively shorter frame before settling on the answer.
+ *
+ * The frame is sized to the height its contents occupy, so the height it is
+ * given and the height the layout answers for that frame are the same number on
+ * the second pass and every one after it: the answer is a sum of measured rows
+ * and the cover's own height, none of which is derived from the frame. One step
+ * is therefore the normal case, and this is a backstop rather than a mechanism:
+ * it exists so that a measurement that has not settled cannot keep this pass
+ * going, and it cannot change the answer, because a frame sized to the last
+ * height tried is a frame the layout has already had its say about.
+ *
+ * It is a bound and not a while loop because the loop this stands in for runs
+ * downwards only: the height it is asked about is never above the one before it,
+ * so it cannot go for ever. */
+const FRAME_SETTLE_PASSES = 4;
+
 /* The title alignment setting, as the actor alignment each value means.
  *
  * Left is the default and is what the artist underneath the title has always
@@ -474,6 +491,13 @@ class UniversalMusicDesklet extends Desklet.Desklet {
         /* The column height the last pass fitted against, so a pass whose column
          * has changed is not skipped as a repeat of one that has not. */
         this._layoutColumnHeight = -1;
+        /* The cover shape the last pass was worked out for, for the same reason:
+         * a track whose artwork is a different shape is a different layout even
+         * when the frame and the column have not moved an inch. */
+        this._layoutAspect = -1;
+        /* The height the frame is being held to, which is the configured height
+         * until a layout pass finds the contents are shorter than it. */
+        this._frameHeight = 0;
         this._layoutUpdateId = 0;
         this._timelineUpdateId = 0;
         this._marqueeUpdateId = 0;
@@ -511,6 +535,11 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * layout has something to fit against even on a pass that cannot measure
          * it. */
         this._columnNatural = 0;
+        /* What the transport row costs that column, gap included, measured the
+         * same way. Zero until it has been measured, and zero is the
+         * conservative direction: an unmeasured row reclaims nothing rather than
+         * the layout reclaiming a guess. */
+        this._controlsHeight = 0;
         /* Whether the track is advancing. The displayed position is
          * extrapolated from the wall clock only while this is true, so a paused
          * player holds the bar exactly where it stopped instead of letting it
@@ -1077,6 +1106,10 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * settles the children into the frame once St has laid them out. */
         this._layoutSize = { width: -1, height: -1 };
         this._layoutColumnHeight = -1;
+        this._layoutAspect = -1;
+        /* Forced, so the first layout pass after a size change writes the new
+         * frame height even when it is the one the frame is already at. */
+        this._frameHeight = 0;
         this._applyLayout();
         this._scheduleLayoutUpdate();
     }
@@ -1169,8 +1202,31 @@ class UniversalMusicDesklet extends Desklet.Desklet {
         const width = Layout.clampMeasurement(
             Math.min(allocatedWidth > 0 ? allocatedWidth : configured.width, configured.width) -
             themeNode.get_horizontal_padding());
-        const height = Layout.clampMeasurement(
-            Math.min(allocatedHeight > 0 ? allocatedHeight : configured.height, configured.height) -
+
+        /* The height the frame was given, as opposed to the height this desklet
+         * last gave it.
+         *
+         * _applyFrameHeight() sizes the frame to what its contents need, and that
+         * size comes back round as the next allocation. Reading it as the frame's
+         * allocation is what pins the desklet at the height its last contents
+         * wanted: the column grows when a section is switched back on, the layout
+         * asks for more room than the frame has been given, and the frame can
+         * never grow into it because the room it was measured against was its own
+         * previous answer. So an allocation that is exactly the take-in is not
+         * believed, and the configured height is measured instead.
+         *
+         * Only exactly that height is discounted. An allocation that is neither
+         * the configured height nor the take-in came from the theme or from
+         * whatever constrains the actor, and those are real: a desklet handed
+         * less room than it asked for is laid out for the room it has. */
+        const takenIn = this._frameHeight > 0 &&
+            this._frameHeight < configured.height &&
+            allocatedHeight === this._frameHeight;
+        const frameHeight = takenIn
+            ? configured.height
+            : (allocatedHeight > 0 ? allocatedHeight : configured.height);
+        const available = Layout.clampMeasurement(
+            Math.min(frameHeight, configured.height) -
             themeNode.get_vertical_padding());
 
         /* The information column is a vertical stack, and lib/layout.js needs to
@@ -1179,6 +1235,130 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * are measured on their own, before the layout has decided whether to
          * show them, so the numbers are the natural heights either way. */
         const columnHeight = this._columnNaturalHeight();
+
+        /* The shape of the cover is part of the input, not something worked out
+         * after the fact: a cover that is 16:9 needs 90 of the height a square one
+         * needs 160 of, and a layout that reserved for the square would hold 70px
+         * back from the column on the cover's behalf and carry it as an empty
+         * band underneath the controls.
+         *
+         * A placeholder is not square but is not artwork either, and it is drawn
+         * as the square the cover slot is, so it is described as one. */
+        const artworkAspect = this._artworkIsPlaceholder ? 1 : this._artworkAspect;
+
+        /* One set of options, so the two passes below are worked out from exactly
+         * the same numbers and cannot disagree about anything but the height. */
+        const options = {
+            width,
+            /* The width the widget will not go below, taken as the larger of
+             * the theme's minimum and the configured width, so the information
+             * column is capped by the configured size even if the theme asks
+             * for less. Both are numbers no measurement can inflate. */
+            minWidth: Math.max(themeNode.get_min_width(), this._widgetSize.width),
+            infoHeight: columnHeight,
+            artistHeight: this._forcedNaturalHeight(this._artistLabel),
+            timesHeight: this._forcedNaturalHeight(this._timeRow),
+            /* The height the transport row takes in the column, measured as the
+             * difference it makes to the column rather than as its own height, so
+             * the gap above it is reclaimed with it. And whether it is wanted.
+             * Both are inputs for the same reason the cover's shape is: a column
+             * the layout is told about has to be the column it will draw, or the
+             * height the frame is held to comes from a stack that is not the one
+             * on screen.
+             *
+             * The row is measured in and taken out again by the layout rather
+             * than being left out of the measurement, because the layout is what
+             * decides whether it is wanted. See _columnNaturalHeight(). */
+            controlsHeight: this._controlsHeight,
+            controlsShown: this.showControls,
+            artworkMax: this._currentArtworkMax(),
+            artworkPadding: Math.max(0, this._artworkBox.get_theme_node().get_horizontal_padding()) / 2,
+            spacing: this._measureSpacing(),
+            artworkAspect,
+            /* The setting is part of the input for the same reason the shape is:
+             * a desklet with the cover switched off holds the column and nothing
+             * else, and a layout that still reserved a square for a cover that
+             * was never going to be drawn would cap the column against it and
+             * drop rows to fit. */
+            artworkShown: this.showArtwork,
+        };
+
+        /* How much of the frame the contents occupy, which is usually less than
+         * all of it.
+         *
+         * The frame is held to the height the size preset asked for, and the
+         * contents are laid out from what they need, so the room left over by a
+         * layout that does not fill it is not shared out between the children:
+         * it stays where it was put, which in the stacked layout is a band of
+         * desklet background underneath the transport controls. For a 16:9 cover
+         * that band is 99px tall, so the controls sat a long way above the bottom
+         * of the desklet with nothing under them but background.
+         *
+         * The frame is therefore taken in to what the contents need, which leaves
+         * the controls ending shortly below themselves. Two things bound it, and
+         * both are needed:
+         *
+         * The configured height still wins, so the desklet can only ever be
+         * shorter than the preset asked for and never taller than it, and a frame
+         * that is already too small is left alone rather than being tightened to
+         * fit whatever the layout had to drop.
+         *
+         * And the side by side layout is left alone as well, because there the
+         * cover and the column share the height instead of being stacked, so the
+         * contents do fill the frame and there is nothing to take in.
+         *
+         * The number comes out of the layout rather than out of a child, so it
+         * cannot feed back into itself: the layout is a sum of the cover's own
+         * height, the gap and the column's measured rows, and a frame sized to
+         * that sum works the same sum out again. Nothing below reads a preferred
+         * size back out of a child and shortens the frame by it, which is the
+         * shape of thing that makes a desklet shrink a little on every pass
+         * until it is as small as the layout will let it be.
+         *
+         * The frame is measured at the height it is going to have rather than at
+         * the height it was given, and the two are not the same number once
+         * anything has been taken in: the layout at a shorter frame is a different
+         * answer, and sizing the frame from the answer for a taller one is what
+         * leaves the empty band behind in the first place. So it is worked out
+         * again at each height it is taken in to, until the height and the answer
+         * agree, which for every layout here is one step: requiredHeight is a sum
+         * of measured rows, so a frame sized to it sums to the same number again.
+         *
+         * A section the settings have switched off is part of that sum rather than
+         * an exception to it, which is the whole of why the desklet resizes when
+         * the album artwork or the playback controls are turned off and back on
+         * again: there is no separate rule for those two, the column simply stops
+         * containing the row, and the height the contents need is less because
+         * there is less of them in it. */
+        let height = available;
+        let layout = Layout.resolveLayout({ ...options, height });
+
+        for (let pass = 0; pass < FRAME_SETTLE_PASSES; pass++) {
+            /* A frame that is already too small is not tightened any further. The
+             * layout has had to drop a row or leave the cover out, so the height
+             * it is reporting is only the height of what it managed to keep, and
+             * shrinking to that would shrink a frame that was short already.
+             *
+             * A section that was switched off is not one of those drops: the
+             * layout was asked for a desklet without it and is not reporting a
+             * shortfall, so a cover that is off is compared against the setting
+             * rather than treated as a cover that did not fit. */
+            const intact = layout.showArtist && layout.showTimes &&
+                layout.showArtwork === (this.showArtwork === true);
+
+            if (!intact)
+                break;
+
+            const wanted = Math.min(available, layout.requiredHeight);
+
+            if (wanted >= height)
+                break;
+
+            height = wanted;
+            layout = Layout.resolveLayout({ ...options, height });
+        }
+
+        height = Layout.clampMeasurement(height);
 
         /* The pass is skipped only when nothing it depends on has changed.
          *
@@ -1190,39 +1370,62 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * below the bottom of the frame for as long as the size is not changed,
          * which is exactly the failure this is here to prevent. */
         if (width === this._layoutSize.width && height === this._layoutSize.height &&
-            columnHeight === this._layoutColumnHeight)
+            columnHeight === this._layoutColumnHeight && artworkAspect === this._layoutAspect)
             return;
 
         this._layoutSize = { width, height };
         this._layoutColumnHeight = columnHeight;
-
-        const layout = Layout.resolveLayout({
-            width,
-            height,
-            /* The width the widget will not go below, taken as the larger of
-             * the theme's minimum and the configured width, so the information
-             * column is capped by the configured size even if the theme asks
-             * for less. Both are numbers no measurement can inflate. */
-            minWidth: Math.max(themeNode.get_min_width(), this._widgetSize.width),
-            infoHeight: columnHeight,
-            artistHeight: this._forcedNaturalHeight(this._artistLabel),
-            timesHeight: this._forcedNaturalHeight(this._timeRow),
-            artworkMax: this._currentArtworkMax(),
-            artworkPadding: Math.max(0, this._artworkBox.get_theme_node().get_horizontal_padding()) / 2,
-            spacing: this._measureSpacing(),
-        });
+        this._layoutAspect = artworkAspect;
 
         this._logger.debug(
             `layout ${layout.mode} ${width}x${height} ` +
             `cover ${layout.artworkSize}px column<=${layout.infoMaxWidth}px ` +
+            `needs ${layout.requiredHeight}px ` +
             `title ${this._naturalWidth(this._titleLabel)}px in ${this._titleViewport.get_width()}px`);
 
         this._layout = layout;
         this._applyLayoutShape(layout);
+        this._applyFrameHeight(height, themeNode.get_vertical_padding());
         /* Deferred, because this pass has just changed the sizes the rail is
          * measured against and the rail has not been given its new width yet. */
         this._scheduleTimelineRender();
         this._scheduleMarqueeUpdate();
+    }
+
+    /* The frame itself, whose height is what the contents need rather than the
+     * height the size preset asked for.
+     *
+     * _applySize() put the configured height on the box, as an inline
+     * min-height so St would measure it and as a fixed size so St could not lay
+     * the children out at whatever they preferred instead. Both of those are kept
+     * for the width, which does not move. For the height the floor is lowered to
+     * what the contents occupy, which is what the empty band underneath the
+     * controls was: a frame held at its configured height around contents that
+     * stopped 99px short of the bottom of it.
+     *
+     * The ceiling is untouched. The configured height is still the largest this
+     * can be, so a layout that somehow wanted more room than the preset allowed
+     * cannot get it, and the width is not involved at all: the frame only ever
+     * gets shorter. */
+    _applyFrameHeight(contentHeight, padding) {
+        const width = this._widgetSize.width;
+        /* @padding is what the theme takes off the frame all told, top and bottom
+         * together, which is how _applyLayout() reads it too. It is added once for
+         * that reason: added twice it is the difference between a frame that ends
+         * where the contents end and one with the whole of the frame's own padding
+         * left over underneath them, which is the band this method exists to take
+         * in. */
+        const frame = Math.min(this._widgetSize.height,
+            Layout.clampMeasurement(contentHeight) + Math.max(0, padding));
+
+        if (frame === this._frameHeight)
+            return;
+
+        this._frameHeight = frame;
+        this._root.set_style(`min-width: ${width}px; min-height: ${frame}px;`);
+        this._root.setMaxWidth(width);
+        this._root.setMaxHeight(this._widgetSize.height);
+        this._root.set_size(width, frame);
     }
 
     /* The largest cover the current size allows.
@@ -1352,10 +1555,14 @@ class UniversalMusicDesklet extends Desklet.Desklet {
      * reaches the inner edges of the box. Sized any larger, the extra is drawn
      * as desklet background and reads as a black border around the cover.
      *
-     * St.Icon fits an image into a square of icon_size without stretching it,
-     * so a cover that is not square comes out a little shorter or narrower than
-     * that square, and the box follows it to the pixel. Nothing is cropped off
-     * the artwork, and there is no strip of background beside it either.
+     * The icon is given the artwork's own shape as well, which is what makes the
+     * two agree. St.Icon is told how big to draw by icon_size, which is a square,
+     * and it fills whatever allocation it ends up with: an icon that is only told
+     * icon_size is a square whatever the artwork is, so in a box that was made
+     * shorter or narrower for a cover that is not square it does not fit, and
+     * being neither it nor its box able to clip, it paints over whatever is
+     * underneath. Sizing the icon to the inside of the box keeps the artwork
+     * undistorted and inside the space the layout reserved for it.
      *
      * Called on every layout pass and whenever the cover changes, because both
      * of the sizes it works from come from one of the two. */
@@ -1369,15 +1576,46 @@ class UniversalMusicDesklet extends Desklet.Desklet {
         const padding = Math.max(0, layout.artworkBoxWidth - layout.artworkSize) / 2;
         const aspect = this._artworkIsPlaceholder ? 0 : this._artworkAspect;
 
+        /* The shape of the box, and the layout's own answer for it rather than a
+         * second copy of the same arithmetic.
+         *
+         * The layout reserved the height this gives, and the empty band under the
+         * controls was what happened when the two were worked out separately: the
+         * reservation was for a square, the box was 16:9, and the difference
+         * between them was drawn as background with nothing in it. Asking the
+         * layout means the box is the size the room was reserved for by
+         * construction, and a change to one cannot leave the other behind.
+         *
+         * The width is still worked out here, because a cover that is taller than
+         * it is wide is the one shape whose box is narrower than the slot, and
+         * lib/layout.js reserves that width as the height of a square that never
+         * gets drawn there either. */
         const width = aspect > 0 && aspect < 1
             ? Math.round(size * aspect) + padding * 2
             : layout.artworkBoxWidth;
-        const height = aspect > 1
-            ? Math.round(size / aspect) + padding * 2
-            : layout.artworkBoxWidth;
+        const height = Layout.coverBoxHeight(size, layout.artworkBoxWidth, aspect, padding);
 
         this._artworkBox.set_width(width);
         this._artworkBox.set_height(height);
+
+        /* The icon takes the artwork's shape: the box less the padding around it,
+         * which is the same shape the box was just given and therefore never
+         * larger than the space the layout reserved. St.Icon answers a preferred
+         * size query from that explicit size rather than from icon_size, so the
+         * box cannot be laid out a size the artwork does not have.
+         *
+         * The placeholder is the one case that is left alone: it is a themed icon
+         * that is deliberately smaller than the slot and centred inside it, so it
+         * keeps the square icon_size and takes no size of its own. Clearing the
+         * pair rather than leaving them is what stops the shape of the last real
+         * cover from outliving it. */
+        if (this._artworkIsPlaceholder) {
+            this._artworkIcon.set_width(-1);
+            this._artworkIcon.set_height(-1);
+        } else {
+            this._artworkIcon.set_width(Math.max(0, width - padding * 2));
+            this._artworkIcon.set_height(Math.max(0, height - padding * 2));
+        }
     }
 
     /* ---------------------------------------------------------------- Marquee */
@@ -1616,30 +1854,45 @@ class UniversalMusicDesklet extends Desklet.Desklet {
      * the only things that can change it.
      */
     _columnNaturalHeight() {
+        /* What the transport row costs this column, taken out of the height
+         * rather than left out of the measurement.
+         *
+         * The column is measured with the row forced into it, and the row is then
+         * measured again with the column, the difference being what the row costs.
+         * Both halves matter and neither can be got from the other:
+         *
+         * Measuring the column with the row already hidden would hand the layout
+         * a column that has already had the row taken out of it, and the layout
+         * then takes it out a second time, because it is the thing deciding
+         * whether the row is wanted and cannot be given an answer that assumes
+         * the decision has been made. That is what a frame 30px shorter than the
+         * space it holds came from: the row was 30px of column, the measurement
+         * reported a column without it, and 30px more came off on top.
+         *
+         * And taking the row's own height instead would leave the gap above it
+         * behind, so the frame would keep the one thing that setting the row off
+         * is supposed to give back. The difference between the two measurements
+         * is the row and its gap, and nothing else, because the only thing that
+         * changed between them is whether the row is in the column.
+         *
+         * The second measurement is only taken while the row is switched off,
+         * which is the only time the layout has anything to take off it, so the
+         * cost is only ever paid when there is space to give back. */
+        this._controlsHeight = 0;
+
         if (this._root && this._root.get_stage()) {
-            const side = this._sideBox;
-            const clampH = side._clampHeight;
-            const capH = side._maxHeight;
-            const height = side.height;
+            const full = this._sideNaturalHeight(true);
 
-            /* Unclamped and explicitly un-sized, so the box has to answer for
-             * what its children want rather than for the size it was last given. */
-            side._clampHeight = 0;
-            side._maxHeight = 0;
-            side.set_height(-1);
-            side.queue_relayout();
-            side.ensure_style();
+            if (Number.isFinite(full) && full > 0)
+                this._columnNatural = full;
 
-            const natural = side.get_preferred_size(-1)[3];
+            if (!this._controls.visible) {
+                const without = this._sideNaturalHeight(false);
 
-            /* Straight back, so nothing observes the desklet in this state. */
-            side._clampHeight = clampH;
-            side._maxHeight = capH;
-            side.set_height(height);
-            side.queue_relayout();
-
-            if (Number.isFinite(natural) && natural > 0)
-                this._columnNatural = natural;
+                this._controlsHeight = Number.isFinite(without) && without > 0
+                    ? Math.max(0, full - without)
+                    : 0;
+            }
         }
 
         /* Never below what the rows physically need.
@@ -1654,12 +1907,68 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * before anything else is decided.
          *
          * Their own height does not depend on the column, so this is not
-         * affected by the clamp the column is under. */
-        const floor = this._naturalHeight(this._controls) +
-            this._naturalHeight(this._titleViewport) +
-            this._naturalHeight(this._seekTrack);
+         * affected by the clamp the column is under. It is measured as if they
+         * were showing for the same reason the column above is: a floor built out
+         * of a row that is switched off is a floor holding back the very space
+         * the setting was asked to give back. */
+        const floor = this._naturalHeight(this._titleViewport) +
+            this._naturalHeight(this._seekTrack) +
+            this._forcedNaturalHeight(this._controls);
 
         return Math.max(this._columnNatural || 0, floor);
+    }
+
+    /* The height the information column asks for with its transport row either
+     * forced into it or taken out of it, measured with nothing holding the column
+     * in.
+     *
+     * Unclamped and explicitly un-sized, so the box has to answer for what its
+     * children want rather than for the size it was last given. The row is put
+     * back exactly as it was afterwards, at zero opacity for the moment it is
+     * borrowed, so nothing observes the desklet in a state it will not keep. */
+    _sideNaturalHeight(controlsVisible) {
+        const side = this._sideBox;
+        const controls = this._controls;
+        const wasVisible = controls.visible;
+        const opacity = controls.opacity;
+        const clampH = side._clampHeight;
+        const capH = side._maxHeight;
+        const height = side.height;
+
+        if (controlsVisible !== wasVisible) {
+            if (controlsVisible)
+                controls.show();
+            else
+                controls.hide();
+        }
+
+        if (controlsVisible)
+            controls.opacity = 0;
+
+        side._clampHeight = 0;
+        side._maxHeight = 0;
+        side.set_height(-1);
+        side.queue_relayout();
+        side.ensure_style();
+
+        const natural = side.get_preferred_size(-1)[3];
+
+        /* Straight back, so nothing observes the desklet in this state. */
+        side._clampHeight = clampH;
+        side._maxHeight = capH;
+        side.set_height(height);
+        side.queue_relayout();
+
+        controls.opacity = opacity;
+
+        if (controlsVisible !== wasVisible) {
+            if (controlsVisible)
+                controls.hide();
+            else
+                controls.show();
+        }
+
+        return natural;
     }
 
     /* The natural height of a child, the height counterpart of _naturalWidth.
@@ -2530,6 +2839,11 @@ class UniversalMusicDesklet extends Desklet.Desklet {
         this._artworkIsPlaceholder = true;
         this._artworkAspect = 1;
         this._applyArtworkSize();
+        /* The shape of the cover is part of the layout, not only of the box: the
+         * frame is held to the height the cover and the column together need, so
+         * a cover that changes shape needs the layout worked out again rather than
+         * the box left at the height the last shape reserved for it. */
+        this._scheduleLayoutUpdate();
     }
 
     /* Points the artwork icon at the downloaded bytes.
@@ -2561,6 +2875,12 @@ class UniversalMusicDesklet extends Desklet.Desklet {
          * above are unchanged and only the shape of what came out is used. */
         this._artworkAspect = artworkAspect(path) || 1;
         this._applyArtworkSize();
+        /* A 16:9 frame needs 90 of the height a square cover needs 160 of, and the
+         * layout reserves the room and the frame is held to what is in it, so a
+         * cover that is not square both gives the column more room and lets the
+         * desklet end shortly below the controls rather than 70px above the bottom
+         * of them. Both of those come from a layout pass, so one is asked for. */
+        this._scheduleLayoutUpdate();
 
         /* The new cover is now referenced, so the previous file can go. */
         this._removeArtworkCacheFile(this._artworkCachePath);
